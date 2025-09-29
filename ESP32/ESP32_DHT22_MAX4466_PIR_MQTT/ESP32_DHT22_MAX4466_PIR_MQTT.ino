@@ -2,18 +2,17 @@
 #include <PubSubClient.h>
 #include "DHT.h"
 #include <time.h>
-
+#include <WiFiClientSecure.h>
 // --- WiFi ---
 const char* ssid = "Cantika";
 const char* password = "cantikaacantik";
 
-// --- MQTT / EMQX ---
-const char* mqtt_server = "broker.emqx.io";   // or your own EMQX host
-const int mqtt_port = 8883;                   // 8883 if using TLS
-const char* mqtt_client_id = "";
-const char* mqtt_user = "";       // EMQX username (API key)
-const char* mqtt_pass = "";    // EMQX secret/password
-const char* mqtt_topic = "esp32";     // topic to publish
+// MQTT Broker settings 
+const int mqtt_port = 8883;// MQTT port (TLS) 
+const char *mqtt_broker = "REDACTED"; // EMQX broker endpoint 
+const char *mqtt_topic = "REDACTED"; // MQTT topic 
+const char *mqtt_username = "REDACTED"; // MQTT username for authentication 
+const char *mqtt_password = "REDACTED"; // MQTT password for authentication 
 
 // NTP Server settings
 const char *ntp_server = "pool.ntp.org";     // Default NTP server
@@ -22,7 +21,7 @@ const long gmt_offset_sec = 7 * 3600;       // adjust to your timezone
 const int daylight_offset_sec = 0;
 
 
-BearSSL::WiFiClientSecure espClient;
+WiFiClientSecure espClient;
 PubSubClient mqtt_client(espClient);
 
 static const char ca_cert[] PROGMEM = R"EOF(
@@ -59,80 +58,64 @@ CAUw7C29C79Fv1C5qfPrmAESrciIxpg0X40KPMbp1ZWVbd4=
 
 DHT dht(DHTPIN, DHTTYPE);
 
-void setup_wifi() {
-  delay(10);
-  Serial.println("Connecting to WiFi...");
+// ---- Functions ----
+void connectToWiFi() {
   WiFi.begin(ssid, password);
-
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+    delay(1000);
+    Serial.println("Connecting to WiFi...");
   }
-
-  Serial.println("\nWiFi connected, IP address: ");
-  Serial.println(WiFi.localIP());
-  syncTime();  // X.509 validation requires synchronization time
-}
-
-void connectToMQTT() {
-    BearSSL::X509List serverTrustedCA(ca_cert);
-    espClient.setTrustAnchors(&serverTrustedCA);
-    while (!mqtt_client.connected()) {
-        String client_id = "esp8266-client-" + String(WiFi.macAddress());
-        Serial.printf("Connecting to MQTT Broker as %s.....\n", client_id.c_str());
-        if (mqtt_client.connect(client_id.c_str(), mqtt_username, mqtt_password)) {
-            Serial.println("Connected to MQTT broker");
-            mqtt_client.subscribe(mqtt_topic);
-            // Publish message upon successful connection
-            mqtt_client.publish(mqtt_topic, "Hi EMQX I'm ESP8266 ^^");
-        } else {
-            char err_buf[128];
-            espClient.getLastSSLError(err_buf, sizeof(err_buf));
-            Serial.print("Failed to connect to MQTT broker, rc=");
-            Serial.println(mqtt_client.state());
-            Serial.print("SSL error: ");
-            Serial.println(err_buf);
-            delay(5000);
-        }
-    }
-}
-
-void mqttCallback(char *topic, byte *payload, unsigned int length) {
-    Serial.print("Message received on topic: ");
-    Serial.print(topic);
-    Serial.print("]: ");
-    for (int i = 0; i < length; i++) {
-        Serial.print((char) payload[i]);
-    }
-    Serial.println();
+  Serial.println("Connected to WiFi");
 }
 
 void syncTime() {
-    configTime(gmt_offset_sec, daylight_offset_sec, ntp_server);
-    Serial.print("Waiting for NTP time sync: ");
-    while (time(nullptr) < 8 * 3600 * 2) {
-        delay(1000);
-        Serial.print(".");
-    }
-    Serial.println("Time synchronized");
-    struct tm timeinfo;
-    if (getLocalTime(&timeinfo)) {
-        Serial.print("Current time: ");
-        Serial.println(asctime(&timeinfo));
+  configTime(gmt_offset_sec, daylight_offset_sec, ntp_server);
+  Serial.print("Waiting for NTP time sync");
+  while (time(nullptr) < 8 * 3600 * 2) {
+    delay(1000);
+    Serial.print(".");
+  }
+  Serial.println(" done");
+}
+
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("]: ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+}
+
+void connectToMQTT() {
+  espClient.setCACert(ca_cert);
+  while (!mqtt_client.connected()) {
+    String client_id = "esp32-client-" + String(WiFi.macAddress());
+    Serial.printf("Connecting to MQTT Broker as %s...\n", client_id.c_str());
+
+    if (mqtt_client.connect(client_id.c_str(), mqtt_username, mqtt_password)) {
+      Serial.println("Connected to MQTT broker (TLS)");
+      mqtt_client.subscribe(mqtt_topic);
+      mqtt_client.publish(mqtt_topic, "Hello EMQX from ESP32 over TLS!");
     } else {
-        Serial.println("Failed to obtain local time");
+      Serial.print("Failed, rc=");
+      Serial.println(mqtt_client.state());
+      delay(5000);
     }
+  }
 }
 
 
 void setup() {
   Serial.begin(115200);
-
+  connectToWiFi();
+  syncTime();
+  mqtt_client.setServer(mqtt_broker, mqtt_port);
+  mqtt_client.setCallback(mqttCallback);
+  connectToMQTT();
   dht.begin();
   pinMode(PIR_PIN, INPUT);
-
-  setup_wifi();
-  mqtt_client.setServer(mqtt_server, mqtt_port);
 }
 
 void loop() {
